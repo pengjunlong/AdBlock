@@ -1,10 +1,10 @@
-package com.example.android_sample.data.repository
+package com.pengjunlong.adblock.data.repository
 
-import com.example.android_sample.data.model.Post
-import com.example.android_sample.data.remote.PostApiService
 import com.example.framework.network.ApiResult
 import com.example.framework.network.NetworkManager
 import com.example.framework.network.safeApiCall
+import com.pengjunlong.adblock.data.model.Post
+import com.pengjunlong.adblock.data.remote.PostApiService
 
 /**
  * 示例 Repository

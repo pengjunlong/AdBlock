@@ -1,4 +1,4 @@
-package com.example.android_sample
+package com.pengjunlong.adblock
 
 import com.example.framework.core.BaseApplication
 import com.example.framework.core.initializer.FrameworkInitializer

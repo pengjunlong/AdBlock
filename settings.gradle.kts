@@ -21,7 +21,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "android_sample"
+rootProject.name = "AdBlock"
 
 include(":app")
 include(":framework-core")

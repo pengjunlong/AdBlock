@@ -10,11 +10,11 @@ val ciVersionName: String = findProperty("versionName")?.toString() ?: "1.0.0"
 val ciVersionCode: Int = findProperty("versionCode")?.toString()?.toIntOrNull() ?: 1
 
 android {
-    namespace = "com.example.android_sample"
+    namespace = "com.pengjunlong.adblock"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "com.example.android_sample"
+        applicationId = "com.pengjunlong.adblock"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = ciVersionCode

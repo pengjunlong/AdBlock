@@ -1,6 +1,6 @@
-package com.example.android_sample.data.remote
+package com.pengjunlong.adblock.data.remote
 
-import com.example.android_sample.data.model.Post
+import com.pengjunlong.adblock.data.model.Post
 import retrofit2.http.GET
 import retrofit2.http.Path
 

@@ -1,14 +1,15 @@
-package com.example.android_sample.ui.main
+package com.pengjunlong.adblock.ui.main
 
+import android.content.Context
 import androidx.lifecycle.viewModelScope
-import com.example.android_sample.data.model.Post
-import com.example.android_sample.data.repository.PostRepository
 import com.example.framework.crash.CrashReporter
 import com.example.framework.logger.L
 import com.example.framework.network.update.UpdateChecker
 import com.example.framework.network.update.UpdateInfo
 import com.example.framework.storage.KVStore
 import com.example.framework.ui.base.BaseViewModel
+import com.pengjunlong.adblock.data.model.Post
+import com.pengjunlong.adblock.data.repository.PostRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -50,7 +51,7 @@ class MainViewModel : BaseViewModel() {
     // TODO: 替换为你自己的 GitHub 仓库信息
     private val updateChecker = UpdateChecker(
         repoOwner = "pengjunlong",
-        repoName  = "android_sample",
+        repoName  = "AdBlock",
     )
 
     init {
@@ -77,7 +78,7 @@ class MainViewModel : BaseViewModel() {
      * - 无新版本 → 发送 [noUpdateEvent]
      * - 请求失败 → 发送 [errorEvent]（BaseViewModel 提供）
      */
-    fun checkUpdate(context: android.content.Context) {
+    fun checkUpdate(context: Context) {
         if (_isCheckingUpdate.value) return
         request(
             showLoading = false,

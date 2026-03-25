@@ -1,4 +1,4 @@
-package com.example.android_sample.ui.main
+package com.pengjunlong.adblock.ui.main
 
 import android.Manifest
 import android.content.Intent
@@ -10,7 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
-import com.example.android_sample.databinding.ActivityMainBinding
+import com.pengjunlong.adblock.databinding.ActivityMainBinding
 import com.example.framework.network.update.UpdateInfo
 import com.example.framework.ui.base.BaseActivity
 import com.example.framework.ui.ext.toast
