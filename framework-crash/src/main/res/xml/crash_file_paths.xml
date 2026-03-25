@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider 路径配置，用于将崩溃日志文件分享给其他 App（系统分享菜单）。
+    crash_*.txt 日志文件写入 getCacheDir()，此处映射为 "crash-logs/" 前缀。
+-->
+<paths>
+    <cache-path name="crash-logs" path="." />
+</paths>
+

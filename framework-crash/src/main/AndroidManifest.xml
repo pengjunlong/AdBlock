@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!--
+            FileProvider：将崩溃日志文件的 content URI 共享给系统分享菜单。
+            authorities 用 ${applicationId}.crash_provider 保证唯一性，
+            与 CrashReporter.buildShareIntent() 中的 authority 保持一致。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.crash_provider"
+            android:exported="false"
+            android:grantUriPermissions="true"
+            tools:replace="android:authorities">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/crash_file_paths" />
+        </provider>
+    </application>
+
+</manifest>
+
