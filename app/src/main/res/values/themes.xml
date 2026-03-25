@@ -9,5 +9,10 @@
         <item name="colorOnSecondary">@color/black</item>
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
     </style>
+
+    <!-- 关键词 chip 样式（Material2 兼容） -->
+    <style name="Widget.AdBlock.Chip" parent="Widget.MaterialComponents.Chip.Entry">
+        <item name="android:textSize">13sp</item>
+    </style>
 </resources>
 

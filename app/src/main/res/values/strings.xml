@@ -1,5 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AdBlock</string>
+    <string name="app_name">广告跳过</string>
+
+    <!-- 无障碍服务描述 -->
+    <string name="accessibility_service_label">广告跳过无障碍服务</string>
+    <string name="accessibility_service_description">监控屏幕内容，自动检测并点击"跳过"类按钮，帮助你跳过开屏广告</string>
+
+    <!-- 主界面 -->
+    <string name="status_card_title">服务状态</string>
+    <string name="accessibility_enabled">无障碍服务：已开启 ✅</string>
+    <string name="accessibility_disabled">无障碍服务：未开启 ❌</string>
+    <string name="go_to_accessibility_settings">前往开启无障碍权限</string>
+    <string name="service_switch_label">广告跳过开关</string>
+    <string name="stats_card_title">今日统计</string>
+    <string name="stats_count_label">已跳过广告</string>
+    <string name="stats_count_unit">次</string>
+    <string name="stats_last_app">最近跳过应用</string>
+    <string name="stats_none">—</string>
+    <string name="reset_stats">重置统计</string>
+    <string name="keywords_card_title">关键词管理</string>
+    <string name="keyword_count_hint">当前 %d 个关键词（点击管理）</string>
+    <string name="add_keyword">添加关键词</string>
+    <string name="restore_default_keywords">恢复默认关键词</string>
+    <string name="whitelist_card_title">黑名单（仅处理名单内应用）</string>
+    <string name="whitelist_hint">黑名单为空时对所有非系统应用生效；添加应用后仅处理名单内的 App</string>
+    <string name="whitelist_add_hint">如：com.tencent.mm</string>
+    <string name="whitelist_add_btn">添加</string>
+    <string name="settings_card_title">设置</string>
+    <string name="click_delay_label">点击延迟（毫秒）</string>
+    <string name="show_toast_label">跳过时显示提示</string>
+
+    <!-- 关键词输入对话框 -->
+    <string name="keyword_dialog_title">添加关键词</string>
+    <string name="keyword_input_hint">如：跳过广告</string>
+    <string name="confirm">确定</string>
+    <string name="cancel">取消</string>
+    <string name="keyword_empty_warn">关键词不能为空</string>
+    <string name="keyword_exists_warn">关键词已存在</string>
+    <string name="keyword_added_toast">已添加：%s</string>
+    <string name="keyword_deleted_toast">已删除：%s</string>
+    <string name="keywords_reset_toast">已恢复默认关键词</string>
+    <string name="stats_reset_toast">统计已重置</string>
+    <string name="whitelist_added_toast">已加入白名单：%s</string>
+    <string name="whitelist_removed_toast">已从白名单移除：%s</string>
+    <string name="whitelist_empty_warn">包名不能为空</string>
+    <string name="blacklist_added_toast">已加入黑名单：%s</string>
+    <string name="blacklist_removed_toast">已从黑名单移除：%s</string>
+
+    <!-- 应用选择器 -->
+    <string name="app_picker_title">选择应用加入黑名单</string>
+    <string name="app_picker_search_hint">搜索应用名或包名</string>
+    <string name="app_picker_confirm">确定（已选 %d 个）</string>
+    <string name="app_picker_loading">加载应用列表中…</string>
+    <string name="whitelist_pick_apps">选择应用</string>
+
+    <!-- 广告跳过 Toast -->
+    <string name="ad_skipped_toast">✅ 已自动跳过广告</string>
+
+    <!-- 前台服务通知 -->
+    <string name="notification_channel_name">广告跳过服务</string>
+    <string name="notification_channel_desc">保持广告跳过服务在后台持续运行</string>
+    <string name="notification_title">广告跳过助手</string>
+    <string name="notification_content">正在监控开屏广告，随时为你跳过</string>
+    <string name="notification_content_blocked">今日已自动跳过 %d 次广告 🎉</string>
+
+    <!-- 检查更新 -->
+    <string name="check_update">检查更新</string>
+    <string name="checking_update">检查中…</string>
 </resources>
 

@@ -1,15 +1,15 @@
 package com.pengjunlong.adblock.ui.main
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import androidx.lifecycle.viewModelScope
-import com.example.framework.crash.CrashReporter
 import com.example.framework.logger.L
 import com.example.framework.network.update.UpdateChecker
 import com.example.framework.network.update.UpdateInfo
-import com.example.framework.storage.KVStore
 import com.example.framework.ui.base.BaseViewModel
-import com.pengjunlong.adblock.data.model.Post
-import com.pengjunlong.adblock.data.repository.PostRepository
+import com.pengjunlong.adblock.service.AdBlockConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -17,67 +17,181 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** 应用信息数据类，供应用选择器使用 */
+data class AppInfo(
+    val packageName: String,
+    val appName: String,
+    val icon: android.graphics.drawable.Drawable?,
+)
 
 /**
- * 示例 ViewModel
+ * 主界面 ViewModel
  *
- * 演示：
- * - 通过 [request] 发起网络请求（自动 loading / error 处理）
- * - 通过 [KVStore] 读写本地存储
- * - 通过 [CrashReporter.putCustomData] 附加用户信息到崩溃报告
- * - 通过 [UpdateChecker] 检查 GitHub Release 是否有新版本
+ * 管理：
+ * - 服务开关状态
+ * - 关键词列表
+ * - 黑名单列表（仅名单内应用才会被处理；为空时对所有非系统应用生效）
+ * - 今日统计（跳过次数、最近跳过应用）
+ * - 点击延迟、Toast 开关等设置
+ * - 检查更新
  */
 class MainViewModel : BaseViewModel() {
 
-    private val repo = PostRepository()
+    // ─── 服务开关 ──────────────────────────────────────────────────────────────
 
-    private val _posts = MutableStateFlow<List<Post>>(emptyList())
-    val posts: StateFlow<List<Post>> = _posts.asStateFlow()
+    private val _isEnabled = MutableStateFlow(AdBlockConfig.isEnabled)
+    val isEnabled: StateFlow<Boolean> = _isEnabled.asStateFlow()
 
-    // ── 检查更新 ────────────────────────────────────────────────────────────────
+    fun setEnabled(enabled: Boolean) {
+        AdBlockConfig.isEnabled = enabled
+        _isEnabled.value = enabled
+    }
 
-    /** 正在检查更新 */
-    private val _isCheckingUpdate = MutableStateFlow(false)
-    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+    // ─── 统计 ──────────────────────────────────────────────────────────────────
 
-    /** 有新版本时发送（一次性事件） */
-    private val _updateAvailableEvent = MutableSharedFlow<UpdateInfo>()
-    val updateAvailableEvent: SharedFlow<UpdateInfo> = _updateAvailableEvent.asSharedFlow()
+    private val _statsCount = MutableStateFlow(AdBlockConfig.getTodayCount())
+    val statsCount: StateFlow<Int> = _statsCount.asStateFlow()
 
-    /** 检查更新结束但无新版本时发送（一次性事件，携带提示消息） */
-    private val _noUpdateEvent = MutableSharedFlow<String>()
-    val noUpdateEvent: SharedFlow<String> = _noUpdateEvent.asSharedFlow()
+    private val _lastApp = MutableStateFlow(AdBlockConfig.lastBlockedApp)
+    val lastApp: StateFlow<String> = _lastApp.asStateFlow()
 
-    // TODO: 替换为你自己的 GitHub 仓库信息
+    fun refreshStats() {
+        _statsCount.value = AdBlockConfig.getTodayCount()
+        _lastApp.value = AdBlockConfig.lastBlockedApp
+    }
+
+    fun resetStats() {
+        AdBlockConfig.resetStats()
+        refreshStats()
+    }
+
+    // ─── 关键词 ────────────────────────────────────────────────────────────────
+
+    private val _keywords = MutableStateFlow(AdBlockConfig.getKeywords())
+    val keywords: StateFlow<List<String>> = _keywords.asStateFlow()
+
+    fun refreshKeywords() {
+        _keywords.value = AdBlockConfig.getKeywords()
+    }
+
+    fun addKeyword(keyword: String): Boolean {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return false
+        if (AdBlockConfig.getKeywords().contains(trimmed)) return false
+        AdBlockConfig.addKeyword(trimmed)
+        refreshKeywords()
+        return true
+    }
+
+    fun removeKeyword(keyword: String) {
+        AdBlockConfig.removeKeyword(keyword)
+        refreshKeywords()
+    }
+
+    fun resetKeywordsToDefault() {
+        AdBlockConfig.resetKeywordsToDefault()
+        refreshKeywords()
+    }
+
+    // ─── 黑名单 ────────────────────────────────────────────────────────────────
+
+    private val _targetList = MutableStateFlow(AdBlockConfig.getTargetList().toList())
+    val targetList: StateFlow<List<String>> = _targetList.asStateFlow()
+
+    fun refreshTargetList() {
+        _targetList.value = AdBlockConfig.getTargetList().toList()
+    }
+
+    fun addToTargetList(packageName: String): Boolean {
+        val trimmed = packageName.trim()
+        if (trimmed.isEmpty()) return false
+        AdBlockConfig.addToTargetList(trimmed)
+        refreshTargetList()
+        return true
+    }
+
+    fun removeFromTargetList(packageName: String) {
+        AdBlockConfig.removeFromTargetList(packageName)
+        refreshTargetList()
+    }
+
+    // ─── 应用列表（供黑名单选择器使用） ───────────────────────────────────────────
+
+    /** 已安装的用户应用列表（懒加载，首次调用 [loadInstalledApps] 后填充） */
+    private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
+
+    private val _appsLoading = MutableStateFlow(false)
+    val appsLoading: StateFlow<Boolean> = _appsLoading.asStateFlow()
+
+    /**
+     * 异步加载已安装的用户应用列表（排除系统应用），按名称排序。
+     * 若列表已加载过则直接返回缓存，避免重复 IO。
+     */
+    fun loadInstalledApps(context: Context) {
+        if (_installedApps.value.isNotEmpty()) return
+        viewModelScope.launch {
+            _appsLoading.value = true
+            _installedApps.value = withContext(Dispatchers.IO) {
+                val pm = context.packageManager
+                pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                    .filter { app ->
+                        // 只保留用户安装的应用（排除系统核心进程，保留有 Launcher 图标的系统应用）
+                        val isUserApp = (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0
+                        val hasLaunchIntent = pm.getLaunchIntentForPackage(app.packageName) != null
+                        // 排除自身
+                        val isSelf = app.packageName == context.packageName
+                        (isUserApp || hasLaunchIntent) && !isSelf
+                    }
+                    .map { app ->
+                        AppInfo(
+                            packageName = app.packageName,
+                            appName     = pm.getApplicationLabel(app).toString(),
+                            icon        = try { pm.getApplicationIcon(app.packageName) } catch (_: Exception) { null },
+                        )
+                    }
+                    .sortedBy { it.appName }
+            }
+            _appsLoading.value = false
+        }
+    }
+
+    // ─── 设置 ──────────────────────────────────────────────────────────────────
+
+    private val _clickDelay = MutableStateFlow(AdBlockConfig.clickDelayMs)
+    val clickDelay: StateFlow<Long> = _clickDelay.asStateFlow()
+
+    fun setClickDelay(ms: Long) {
+        AdBlockConfig.clickDelayMs = ms
+        _clickDelay.value = ms
+    }
+
+    private val _showToast = MutableStateFlow(AdBlockConfig.showToast)
+    val showToast: StateFlow<Boolean> = _showToast.asStateFlow()
+
+    fun setShowToast(show: Boolean) {
+        AdBlockConfig.showToast = show
+        _showToast.value = show
+    }
+
+    // ─── 检查更新 ──────────────────────────────────────────────────────────────
+
     private val updateChecker = UpdateChecker(
         repoOwner = "pengjunlong",
         repoName  = "AdBlock",
     )
 
-    init {
-        loadPosts()
-        // 示例：附加用户 ID 到崩溃报告，方便定位问题
-        val userId = KVStore.getString("user_id", "anonymous")
-        CrashReporter.putCustomData("user_id", userId)
-    }
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
 
-    fun loadPosts() = request(
-        block = { repo.fetchPosts() },
-        onSuccess = { posts ->
-            _posts.value = posts
-            // 示例：存储数据条数
-            KVStore.putInt("last_posts_count", posts.size)
-        },
-    )
+    private val _updateAvailableEvent = MutableSharedFlow<UpdateInfo>()
+    val updateAvailableEvent: SharedFlow<UpdateInfo> = _updateAvailableEvent.asSharedFlow()
 
-    fun refresh() = loadPosts()
+    private val _noUpdateEvent = MutableSharedFlow<String>()
+    val noUpdateEvent: SharedFlow<String> = _noUpdateEvent.asSharedFlow()
 
-    /**
-     * 检查 GitHub Release 是否有新版本。
-     * - 有新版本 → 发送 [updateAvailableEvent]
-     * - 无新版本 → 发送 [noUpdateEvent]
-     * - 请求失败 → 发送 [errorEvent]（BaseViewModel 提供）
-     */
     fun checkUpdate(context: Context) {
         if (_isCheckingUpdate.value) return
         request(
@@ -89,10 +203,9 @@ class MainViewModel : BaseViewModel() {
             onSuccess = { info ->
                 _isCheckingUpdate.value = false
                 if (info.hasUpdate) {
-                    L.i("Update available: ${info.currentVersion} → ${info.latestVersion}")
+                    L.i("MainViewModel", "发现新版本: ${info.currentVersion} → ${info.latestVersion}")
                     viewModelScope.launch { _updateAvailableEvent.emit(info) }
                 } else {
-                    L.i("App is up to date: ${info.currentVersion}")
                     viewModelScope.launch {
                         _noUpdateEvent.emit("当前已是最新版本（${info.currentVersion}）")
                     }
@@ -100,11 +213,10 @@ class MainViewModel : BaseViewModel() {
             },
             onError = { error ->
                 _isCheckingUpdate.value = false
-                L.w("Update check failed: ${error.message}")
                 viewModelScope.launch {
                     _noUpdateEvent.emit("检查更新失败：${error.message}")
                 }
-            }
+            },
         )
     }
 }
