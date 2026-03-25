@@ -10,7 +10,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import com.example.framework.logger.L
-import com.pengjunlong.adblock.service.AdBlockService.Companion.WINDOW_CLICK_COOLDOWN
 import java.util.ArrayDeque
 
 /**
@@ -23,17 +22,32 @@ import java.util.ArrayDeque
  * 4. 找到匹配节点后延迟 [AdBlockConfig.clickDelayMs] 毫秒执行点击
  *
  * ## 防误触策略
- * - 同一窗口 ID 在 [WINDOW_CLICK_COOLDOWN] 毫秒内只触发一次点击
+ * - STATE_CHANGED：同一 windowId 2s 内只触发一次点击
+ * - CONTENT_CHANGED（倒计时广告）：同一 windowId 600ms 内只触发一次，保证每秒刷新的倒计时都能被响应
  * - 跳过系统 UI、Launcher 等包名
- * - 白名单包名不处理
+ * - 黑名单模式：黑名单非空时只处理名单内应用
+ *
+ * ## 倒计时广告兼容（百度地图 / 高德 / 抖音等）
+ * - 按钮文字形如"跳过 3"、"跳过广告 5s"，通过关键词包含匹配可命中
+ * - 按钮节点本身可能 isClickable=false，[findClickableNode] 向上查找 10 层
+ * - 仍找不到可点击节点时，直接对文字节点发送 ACTION_CLICK（兜底）
  */
 class AdBlockService : AccessibilityService() {
 
     companion object {
         private const val TAG = "AdBlockService"
 
-        /** 同一窗口的点击冷却时间（毫秒），防止在同一广告页重复触发 */
-        private const val WINDOW_CLICK_COOLDOWN = 2_000L
+        /**
+         * 窗口切换事件（STATE_CHANGED）的冷却时间（毫秒）。
+         * 同一 windowId 内，STATE_CHANGED 触发的点击 2s 内只执行一次。
+         */
+        private const val COOLDOWN_STATE_CHANGED = 2_000L
+
+        /**
+         * 内容变化事件（CONTENT_CHANGED）的冷却时间（毫秒）。
+         * 倒计时广告每秒更新一次，600ms 的冷却确保每秒都能尝试点击。
+         */
+        private const val COOLDOWN_CONTENT_CHANGED = 600L
 
         /** 服务连接状态（供 UI 层查询） */
         @Volatile
@@ -86,15 +100,23 @@ class AdBlockService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** 记录最近一次成功点击的 windowId，用于冷却判断 */
-    private var lastClickWindowId: Int = -1
-    private var lastClickTime: Long = 0L
+    /**
+     * 分别记录两类事件的最近点击信息：
+     * - [lastStateClickWindowId] / [lastStateClickTime]  对应 STATE_CHANGED
+     * - [lastContentClickWindowId] / [lastContentClickTime] 对应 CONTENT_CHANGED
+     *
+     * 分开维护是为了让倒计时广告（CONTENT_CHANGED）使用更短的冷却时间，
+     * 同时不影响普通开屏广告（STATE_CHANGED）的 2s 冷却。
+     */
+    private var lastStateClickWindowId: Int = -1
+    private var lastStateClickTime: Long = 0L
+    private var lastContentClickWindowId: Int = -1
+    private var lastContentClickTime: Long = 0L
 
     // ─── 生命周期 ──────────────────────────────────────────────────────────────
 
     override fun onServiceConnected() {
         isConnected = true
-        // 动态设置监听参数（与 xml 配置等效，但可在运行时调整）
         serviceInfo = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                          AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -133,9 +155,11 @@ class AdBlockService : AccessibilityService() {
         if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
 
+        val isContentChanged = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+
         // 延迟执行，等待页面布局完成
         mainHandler.postDelayed({
-            trySkipAd(pkg)
+            trySkipAd(pkg, isContentChanged)
         }, AdBlockConfig.clickDelayMs)
     }
 
@@ -143,28 +167,43 @@ class AdBlockService : AccessibilityService() {
 
     /**
      * 尝试在当前窗口查找并点击广告跳过按钮。
-     * 先用关键词匹配文字节点，再向上查找可点击父节点。
+     *
+     * @param isContentChanged 是否由 CONTENT_CHANGED 事件触发（用于选择冷却策略）
      */
-    private fun trySkipAd(packageName: String) {
+    private fun trySkipAd(packageName: String, isContentChanged: Boolean) {
         val root = rootInActiveWindow ?: return
         try {
             val keywords = AdBlockConfig.getKeywords()
             val candidate = findAdNode(root, keywords) ?: return
-            val clickTarget = findClickableNode(candidate) ?: return
 
-            // 冷却检查（同一窗口短时间内不重复点击）
+            // 冷却检查（分别对两类事件维护独立冷却）
             val now = System.currentTimeMillis()
-            val windowId = clickTarget.windowId
-            if (windowId == lastClickWindowId && now - lastClickTime < WINDOW_CLICK_COOLDOWN) {
-                L.d(TAG, "冷却中，跳过重复点击 pkg=$packageName windowId=$windowId")
+            val windowId = candidate.windowId
+            val cooldown = if (isContentChanged) COOLDOWN_CONTENT_CHANGED else COOLDOWN_STATE_CHANGED
+            val lastWindowId = if (isContentChanged) lastContentClickWindowId else lastStateClickWindowId
+            val lastTime    = if (isContentChanged) lastContentClickTime     else lastStateClickTime
+
+            if (windowId == lastWindowId && now - lastTime < cooldown) {
+                L.d(TAG, "冷却中，跳过重复点击 pkg=$packageName windowId=$windowId isContent=$isContentChanged")
                 return
             }
 
+            // 查找可点击节点：向上找 10 层；若仍找不到则直接对匹配节点发 ACTION_CLICK（兜底）
+            val clickTarget = findClickableNode(candidate) ?: candidate
+
             val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             if (clicked) {
-                lastClickWindowId = windowId
-                lastClickTime = now
+                if (isContentChanged) {
+                    lastContentClickWindowId = windowId
+                    lastContentClickTime = now
+                } else {
+                    lastStateClickWindowId = windowId
+                    lastStateClickTime = now
+                }
                 onAdSkipped(packageName, candidate.text)
+                L.d(TAG, "点击成功 pkg=$packageName btn=${candidate.text} clickable=${clickTarget.isClickable}")
+            } else {
+                L.d(TAG, "点击失败（节点不可点击或已消失）pkg=$packageName btn=${candidate.text}")
             }
         } catch (e: Exception) {
             L.w(TAG, "trySkipAd 异常: ${e.message}")
@@ -190,7 +229,6 @@ class AdBlockService : AccessibilityService() {
             val desc = node.contentDescription?.toString()?.trim() ?: ""
 
             if (matchesKeyword(text, keywords) || matchesKeyword(desc, keywords)) {
-                // 从队列中取出剩余节点并回收（避免内存泄漏）
                 @Suppress("DEPRECATION")
                 queue.forEach { try { it.recycle() } catch (_: Exception) {} }
                 return node
@@ -199,20 +237,20 @@ class AdBlockService : AccessibilityService() {
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { queue.offer(it) }
             }
-            // 非目标节点：不在这里 recycle，因为 children 已入队，recycle 后访问会崩溃
         }
         return null
     }
 
     /**
-     * 从匹配节点向上查找最近的可点击节点（最多向上 6 层）。
+     * 从匹配节点向上查找最近的可点击节点（最多向上 10 层）。
      * 有些广告按钮的文字节点本身不可点击，点击事件在父容器上。
+     * 若 10 层内都找不到，返回 null，调用方应回退到直接点击原节点。
      */
     private fun findClickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isClickable) return node
         var current: AccessibilityNodeInfo? = node.parent
         var depth = 0
-        while (current != null && depth < 6) {
+        while (current != null && depth < 10) {
             if (current.isClickable) return current
             val parent = current.parent
             @Suppress("DEPRECATION")
@@ -240,17 +278,24 @@ class AdBlockService : AccessibilityService() {
 
     /**
      * 判断文字是否命中关键词（忽略大小写，支持包含匹配）。
-     * 对于 "×" / "✕" 等单字符关键词做精确匹配，避免误触正文。
+     *
+     * 匹配规则：
+     * - 长度 <= 1 的关键词（×、✕）：必须精确相等，避免误触包含该字符的正文
+     * - 其他关键词：只要文字包含关键词即命中（"跳过 3" 包含 "跳过"，可以命中）
+     *
+     * 注意：之前对长度 <= 2 的关键词做精确匹配会导致"跳过"（2字符）无法匹配
+     * "跳过 3"、"跳过广告 5s" 等带数字/后缀的倒计时文字，已改为仅对单字符符号精确匹配。
      */
     private fun matchesKeyword(text: String, keywords: List<String>): Boolean {
         if (text.isEmpty()) return false
         val lowerText = text.lowercase()
         return keywords.any { kw ->
             val lowerKw = kw.trim().lowercase()
-            if (lowerKw.length <= 2) {
-                // 短关键词（×, ✕, skip 等）精确匹配
-                lowerText == lowerKw || lowerText.contains(lowerKw)
+            if (lowerKw.length <= 1) {
+                // 仅单字符符号（×, ✕）精确匹配，避免误触正文
+                lowerText == lowerKw
             } else {
+                // 其他关键词：包含匹配（"跳过 3" 能命中 "跳过"）
                 lowerText.contains(lowerKw)
             }
         }
