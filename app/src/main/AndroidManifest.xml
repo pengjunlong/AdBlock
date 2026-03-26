@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 通知（ACRA + 前台服务，Android 13+） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 悬浮诊断窗口（调试模式下实时展示节点扫描结果） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:name=".SampleApplication"

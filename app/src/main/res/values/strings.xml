@@ -67,5 +67,11 @@
     <!-- 检查更新 -->
     <string name="check_update">检查更新</string>
     <string name="checking_update">检查中…</string>
+
+    <!-- 诊断模式（悬浮窗实时输出节点扫描） -->
+    <string name="diagnostic_mode_label">诊断模式（屏幕悬浮窗调试）</string>
+    <string name="diagnostic_mode_hint">开启后会在屏幕顶部显示浮窗，实时输出节点扫描和点击结果</string>
+    <string name="overlay_permission_required">需授权悬浮窗权限</string>
+    <string name="go_to_overlay_settings">前往授权悬浮窗权限</string>
 </resources>
 

@@ -22,14 +22,15 @@ object AdBlockConfig {
     private val gson = Gson()
 
     // ─── keys ────────────────────────────────────────────────────────────────
-    private const val KEY_ENABLED       = "enabled"
-    private const val KEY_KEYWORDS      = "keywords"
-    private const val KEY_TARGETLIST    = "targetlist"   // 黑名单（仅处理名单内的 App）
-    private const val KEY_CLICK_DELAY   = "click_delay_ms"
-    private const val KEY_SHOW_TOAST    = "show_toast"
-    private const val KEY_STATS_COUNT   = "stats_count"
-    private const val KEY_STATS_DATE    = "stats_date"
-    private const val KEY_LAST_APP      = "last_app"
+    private const val KEY_ENABLED        = "enabled"
+    private const val KEY_KEYWORDS       = "keywords"
+    private const val KEY_TARGETLIST     = "targetlist"   // 黑名单（仅处理名单内的 App）
+    private const val KEY_CLICK_DELAY    = "click_delay_ms"
+    private const val KEY_SHOW_TOAST     = "show_toast"
+    private const val KEY_STATS_COUNT    = "stats_count"
+    private const val KEY_STATS_DATE     = "stats_date"
+    private const val KEY_LAST_APP       = "last_app"
+    private const val KEY_DIAGNOSTIC     = "diagnostic_mode"  // 悬浮窗诊断模式
 
     /** 内置默认关键词（中英文，覆盖主流场景） */
     val DEFAULT_KEYWORDS: List<String> = listOf(
@@ -55,6 +56,12 @@ object AdBlockConfig {
     var isEnabled: Boolean
         get() = store.decodeBool(KEY_ENABLED, true)
         set(v) { store.encode(KEY_ENABLED, v) }
+
+    // ─── 诊断模式（悬浮窗实时日志） ───────────────────────────────────────────
+    /** 开启后 AdBlockService 会通过悬浮窗在屏幕上实时展示节点扫描和点击结果，无需 adb */
+    var diagnosticMode: Boolean
+        get() = store.decodeBool(KEY_DIAGNOSTIC, false)
+        set(v) { store.encode(KEY_DIAGNOSTIC, v) }
 
     // ─── 关键词 ────────────────────────────────────────────────────────────────
 

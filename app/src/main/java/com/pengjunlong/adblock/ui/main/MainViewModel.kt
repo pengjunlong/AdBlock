@@ -128,22 +128,22 @@ class MainViewModel : BaseViewModel() {
 
     /**
      * 异步加载已安装的用户应用列表（排除系统应用），按名称排序。
-     * 若列表已加载过则直接返回缓存，避免重复 IO。
+     * 每次调用都会重新扫描，确保列表是最新的。
      */
     fun loadInstalledApps(context: Context) {
-        if (_installedApps.value.isNotEmpty()) return
+        if (_appsLoading.value) return   // 防止并发重复加载
         viewModelScope.launch {
             _appsLoading.value = true
             _installedApps.value = withContext(Dispatchers.IO) {
                 val pm = context.packageManager
                 pm.getInstalledApplications(PackageManager.GET_META_DATA)
                     .filter { app ->
-                        // 只保留用户安装的应用（排除系统核心进程，保留有 Launcher 图标的系统应用）
+                        // 只保留非系统应用（FLAG_SYSTEM 未设置），且有可启动的 Launcher Intent
                         val isUserApp = (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0
                         val hasLaunchIntent = pm.getLaunchIntentForPackage(app.packageName) != null
                         // 排除自身
                         val isSelf = app.packageName == context.packageName
-                        (isUserApp || hasLaunchIntent) && !isSelf
+                        isUserApp && hasLaunchIntent && !isSelf
                     }
                     .map { app ->
                         AppInfo(

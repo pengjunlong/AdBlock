@@ -9,7 +9,6 @@ import android.os.Build
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
-import android.view.accessibility.AccessibilityManager
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.core.widget.addTextChangedListener
@@ -27,6 +26,7 @@ import com.pengjunlong.adblock.databinding.DialogAppPickerBinding
 import com.pengjunlong.adblock.service.AdBlockConfig
 import com.pengjunlong.adblock.service.AdBlockForegroundService
 import com.pengjunlong.adblock.service.AdBlockService
+import com.pengjunlong.adblock.service.DiagnosticOverlay
 
 /**
  * 主界面：广告跳过服务控制面板
@@ -70,6 +70,12 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         // 每次回到前台刷新无障碍服务状态（用户可能刚从设置页回来）
         updateAccessibilityStatus()
         viewModel.refreshStats()
+        // 刷新悬浮窗权限按钮（用户可能刚授权完回来）
+        updateOverlayPermissionButton()
+        // 若诊断模式开启且悬浮窗已消失（如被系统销毁），重新显示
+        if (AdBlockConfig.diagnosticMode && DiagnosticOverlay.canDrawOverlays(this)) {
+            DiagnosticOverlay.show(this)
+        }
     }
 
     override fun onStart() {
@@ -125,8 +131,7 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
     private fun isAccessibilityServiceEnabled(): Boolean {
         // 优先通过静态字段判断（服务连接时会置 true）
         if (AdBlockService.isConnected) return true
-        // fallback：通过系统 AccessibilityManager 查询
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+        // fallback：通过系统 ENABLED_ACCESSIBILITY_SERVICES 字符串查询
         val enabledServices = Settings.Secure.getString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
@@ -325,10 +330,49 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
             viewModel.setShowToast(checked)
         }
 
+        // 诊断模式开关
+        binding.switchDiagnostic.isChecked = AdBlockConfig.diagnosticMode
+        updateOverlayPermissionButton()
+        binding.switchDiagnostic.setOnCheckedChangeListener { _, checked ->
+            if (checked && !DiagnosticOverlay.canDrawOverlays(this)) {
+                // 未授权：提示用户，不真正打开
+                binding.switchDiagnostic.isChecked = false
+                binding.btnOverlayPermission.visibility = View.VISIBLE
+                toast(getString(R.string.overlay_permission_required))
+                return@setOnCheckedChangeListener
+            }
+            AdBlockConfig.diagnosticMode = checked
+            if (checked) {
+                DiagnosticOverlay.show(this)
+                DiagnosticOverlay.log("诊断模式已开启 ✅")
+            } else {
+                DiagnosticOverlay.hide()
+            }
+            updateOverlayPermissionButton()
+        }
+
+        // 悬浮窗权限跳转按钮
+        binding.btnOverlayPermission.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            }
+        }
+
         // 检查更新
         binding.btnCheckUpdate.setOnClickListener {
             viewModel.checkUpdate(this)
         }
+    }
+
+    /** 每次回到前台都更新授权按钮可见性 */
+    private fun updateOverlayPermissionButton() {
+        val needShow = !DiagnosticOverlay.canDrawOverlays(this)
+        binding.btnOverlayPermission.visibility = if (needShow) View.VISIBLE else View.GONE
     }
 
     // ─── 数据观察 ──────────────────────────────────────────────────────────────

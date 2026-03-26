@@ -4,114 +4,103 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import com.example.framework.logger.L
+import java.text.SimpleDateFormat
 import java.util.ArrayDeque
+import java.util.Date
+import java.util.Locale
 
 /**
  * 开屏广告跳过无障碍服务（核心）
  *
  * ## 工作原理
- * 1. 监听 [AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED]（Activity / Dialog 切换时触发）
- * 2. 监听 [AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED]（页面内容变化，如倒计时广告）
- * 3. BFS 遍历当前窗口节点树，匹配 [AdBlockConfig.getKeywords] 中的关键词
- * 4. 找到匹配节点后延迟 [AdBlockConfig.clickDelayMs] 毫秒执行点击
+ * 1. 监听 TYPE_WINDOW_STATE_CHANGED（Activity/Dialog 切换）
+ * 2. 监听 TYPE_WINDOW_CONTENT_CHANGED（页面内容变化，如倒计时广告）
+ * 3. BFS 遍历当前窗口节点树，匹配关键词
+ * 4. 找到匹配节点后延迟 clickDelayMs 毫秒，按优先级依次尝试点击：
+ *    a. 节点本身可点击 → 直接点击
+ *    b. 向上找 10 层可点击父节点 → 点击父节点
+ *    c. 通过节点的屏幕坐标执行手势点击（GestureDescription）→ 兜底
  *
  * ## 防误触策略
- * - STATE_CHANGED：同一 windowId 2s 内只触发一次点击
- * - CONTENT_CHANGED（倒计时广告）：同一 windowId 600ms 内只触发一次，保证每秒刷新的倒计时都能被响应
- * - 跳过系统 UI、Launcher 等包名
- * - 黑名单模式：黑名单非空时只处理名单内应用
- *
- * ## 倒计时广告兼容（百度地图 / 高德 / 抖音等）
- * - 按钮文字形如"跳过 3"、"跳过广告 5s"，通过关键词包含匹配可命中
- * - 按钮节点本身可能 isClickable=false，[findClickableNode] 向上查找 10 层
- * - 仍找不到可点击节点时，直接对文字节点发送 ACTION_CLICK（兜底）
+ * - STATE_CHANGED：同一 windowId 2s 内只触发一次
+ * - CONTENT_CHANGED（倒计时）：同一 windowId 600ms 内只触发一次
+ * - 跳过系统 UI / Launcher / Settings 包名
+ * - FLAG_SYSTEM 系统应用兜底过滤
+ * - 黑名单精准模式：黑名单非空时只处理名单内应用
  */
 class AdBlockService : AccessibilityService() {
 
     companion object {
         private const val TAG = "AdBlockService"
 
-        /**
-         * 窗口切换事件（STATE_CHANGED）的冷却时间（毫秒）。
-         * 同一 windowId 内，STATE_CHANGED 触发的点击 2s 内只执行一次。
-         */
-        private const val COOLDOWN_STATE_CHANGED = 2_000L
+        private const val COOLDOWN_STATE_CHANGED   = 2_000L
+        private const val COOLDOWN_CONTENT_CHANGED =   600L
 
-        /**
-         * 内容变化事件（CONTENT_CHANGED）的冷却时间（毫秒）。
-         * 倒计时广告每秒更新一次，600ms 的冷却确保每秒都能尝试点击。
-         */
-        private const val COOLDOWN_CONTENT_CHANGED = 600L
+        private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
-        /** 服务连接状态（供 UI 层查询） */
         @Volatile
         var isConnected: Boolean = false
             private set
 
-        /**
-         * 绝对不处理的包名前缀：系统 UI、Launcher、系统设置等。
-         * 用 startsWith 做前缀匹配，覆盖各厂商定制变体。
-         */
         private val SYSTEM_PACKAGES = setOf(
-            // ── 系统 UI / 状态栏 ──────────────────────────
             "com.android.systemui",
-
-            // ── Launcher / 桌面 ───────────────────────────
-            "com.android.launcher",           // AOSP launcher2/3
+            "com.android.launcher",
             "com.google.android.apps.nexuslauncher",
-            "com.miui.home",                  // 小米
-            "com.huawei.android.launcher",    // 华为
-            "com.oppo.launcher",              // OPPO
-            "com.vivo.launcher",              // vivo
+            "com.miui.home",
+            "com.huawei.android.launcher",
+            "com.oppo.launcher",
+            "com.vivo.launcher",
             "com.samsung.android.app.cocktailbarservice",
-            "com.sec.android.app.launcher",   // 三星
-            "com.zte.mifavor.launcher",       // 中兴
-
-            // ── 系统设置（各厂商变体，统一用前缀） ────────
-            "com.android.settings",           // AOSP Settings
-            "com.miui.securitycenter",        // 小米安全中心
-            "com.miui.settings",              // 小米设置
-            "com.huawei.systemmanager",       // 华为手机管家
+            "com.sec.android.app.launcher",
+            "com.zte.mifavor.launcher",
+            "com.android.settings",
+            "com.miui.securitycenter",
+            "com.miui.settings",
+            "com.huawei.systemmanager",
             "com.huawei.devicecloud",
-            "com.hihonor.android.settings",   // 荣耀设置
-            "com.samsung.android.settings",   // 三星设置
+            "com.hihonor.android.settings",
+            "com.samsung.android.settings",
             "com.sec.android.app.SecSetupWizard",
-            "com.coloros.settings",           // OPPO ColorOS 设置
+            "com.coloros.settings",
             "com.oppo.settings",
-            "com.vivo.permissionmanager",     // vivo 权限管理
-            "com.bbk.settings",              // vivo 设置
-            "com.zte.mifavor.settings",       // 中兴设置
-            "com.oneplus.settings",           // 一加设置
+            "com.vivo.permissionmanager",
+            "com.bbk.settings",
+            "com.zte.mifavor.settings",
+            "com.oneplus.settings",
             "com.oplus.settings",
-
-            // ── 无障碍 / 权限相关系统页面 ─────────────────
             "com.android.permissioncontroller",
             "com.google.android.permissioncontroller",
-            "com.miui.permcenter",            // 小米权限管理
+            "com.miui.permcenter",
             "com.huawei.permissionmanager",
         )
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private var lastStateClickWindowId:   Int  = -1
+    private var lastStateClickTime:       Long = 0L
+    private var lastContentClickWindowId: Int  = -1
+    private var lastContentClickTime:     Long = 0L
+
+    // ─── 诊断辅助 ──────────────────────────────────────────────────────────────
+
     /**
-     * 分别记录两类事件的最近点击信息：
-     * - [lastStateClickWindowId] / [lastStateClickTime]  对应 STATE_CHANGED
-     * - [lastContentClickWindowId] / [lastContentClickTime] 对应 CONTENT_CHANGED
-     *
-     * 分开维护是为了让倒计时广告（CONTENT_CHANGED）使用更短的冷却时间，
-     * 同时不影响普通开屏广告（STATE_CHANGED）的 2s 冷却。
+     * 同时输出到 Logcat（INFO）和屏幕悬浮窗（若诊断模式开启）。
      */
-    private var lastStateClickWindowId: Int = -1
-    private var lastStateClickTime: Long = 0L
-    private var lastContentClickWindowId: Int = -1
-    private var lastContentClickTime: Long = 0L
+    private fun dlog(msg: String) {
+        L.i(TAG, msg)
+        if (AdBlockConfig.diagnosticMode) {
+            val ts = timeFmt.format(Date())
+            DiagnosticOverlay.log("[$ts] $msg")
+        }
+    }
 
     // ─── 生命周期 ──────────────────────────────────────────────────────────────
 
@@ -146,10 +135,10 @@ class AdBlockService : AccessibilityService() {
 
         val pkg = event.packageName?.toString() ?: return
         if (pkg.isEmpty()) return
-        if (pkg == packageName) return                            // 跳过自身
-        if (SYSTEM_PACKAGES.any { pkg.startsWith(it) }) return   // 跳过系统/Launcher/Settings
-        if (isSystemApp(pkg)) return                              // 兜底：所有系统应用不处理
-        if (!AdBlockConfig.shouldHandle(pkg)) return              // 黑名单精准模式：不在名单内则跳过
+        if (pkg == packageName) return
+        if (SYSTEM_PACKAGES.any { pkg.startsWith(it) }) return
+        if (isSystemApp(pkg)) return
+        if (!AdBlockConfig.shouldHandle(pkg)) return
 
         val type = event.eventType
         if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -157,7 +146,6 @@ class AdBlockService : AccessibilityService() {
 
         val isContentChanged = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
 
-        // 延迟执行，等待页面布局完成
         mainHandler.postDelayed({
             trySkipAd(pkg, isContentChanged)
         }, AdBlockConfig.clickDelayMs)
@@ -165,48 +153,54 @@ class AdBlockService : AccessibilityService() {
 
     // ─── 广告检测与点击 ────────────────────────────────────────────────────────
 
-    /**
-     * 尝试在当前窗口查找并点击广告跳过按钮。
-     *
-     * @param isContentChanged 是否由 CONTENT_CHANGED 事件触发（用于选择冷却策略）
-     */
     private fun trySkipAd(packageName: String, isContentChanged: Boolean) {
         val root = rootInActiveWindow ?: return
         try {
             val keywords = AdBlockConfig.getKeywords()
-            val candidate = findAdNode(root, keywords) ?: return
 
-            // 冷却检查（分别对两类事件维护独立冷却）
-            val now = System.currentTimeMillis()
-            val windowId = candidate.windowId
-            val cooldown = if (isContentChanged) COOLDOWN_CONTENT_CHANGED else COOLDOWN_STATE_CHANGED
-            val lastWindowId = if (isContentChanged) lastContentClickWindowId else lastStateClickWindowId
-            val lastTime    = if (isContentChanged) lastContentClickTime     else lastStateClickTime
+            // ── 方案A：BFS 遍历所有节点，匹配关键词 ──────────────────────────
+            val candidate = findAdNode(root, keywords)
 
-            if (windowId == lastWindowId && now - lastTime < cooldown) {
-                L.d(TAG, "冷却中，跳过重复点击 pkg=$packageName windowId=$windowId isContent=$isContentChanged")
+            if (candidate == null) {
+                // 诊断：打印所有有文字的节点，帮助分析为何关键词未命中
+                dumpVisibleTextNodes(root, packageName)
                 return
             }
 
-            // 查找可点击节点：向上找 10 层；若仍找不到则直接对匹配节点发 ACTION_CLICK（兜底）
-            val clickTarget = findClickableNode(candidate) ?: candidate
+            // 冷却检查
+            val now      = System.currentTimeMillis()
+            val windowId = candidate.windowId
+            val cooldown    = if (isContentChanged) COOLDOWN_CONTENT_CHANGED else COOLDOWN_STATE_CHANGED
+            val lastWinId   = if (isContentChanged) lastContentClickWindowId  else lastStateClickWindowId
+            val lastTime    = if (isContentChanged) lastContentClickTime      else lastStateClickTime
 
-            val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (windowId == lastWinId && now - lastTime < cooldown) {
+                L.d(TAG, "冷却中 pkg=$packageName winId=$windowId isContent=$isContentChanged")
+                return
+            }
+
+            dlog("候选 pkg=${packageName.substringAfterLast('.')} " +
+                "text='${candidate.text}' desc='${candidate.contentDescription}' " +
+                "clickable=${candidate.isClickable} class=${candidate.className?.toString()?.substringAfterLast('.')}")
+
+            // ── 依次尝试三种点击策略 ──────────────────────────────────────────
+            val clicked = tryClick(candidate, packageName)
+
             if (clicked) {
                 if (isContentChanged) {
                     lastContentClickWindowId = windowId
-                    lastContentClickTime = now
+                    lastContentClickTime     = now
                 } else {
                     lastStateClickWindowId = windowId
-                    lastStateClickTime = now
+                    lastStateClickTime     = now
                 }
                 onAdSkipped(packageName, candidate.text)
-                L.d(TAG, "点击成功 pkg=$packageName btn=${candidate.text} clickable=${clickTarget.isClickable}")
             } else {
-                L.d(TAG, "点击失败（节点不可点击或已消失）pkg=$packageName btn=${candidate.text}")
+                dlog("❌ 三种点击策略均失败 pkg=${packageName.substringAfterLast('.')} btn='${candidate.text}'")
             }
+
         } catch (e: Exception) {
-            L.w(TAG, "trySkipAd 异常: ${e.message}")
+            dlog("⚠️ trySkipAd 异常: ${e.message}")
         } finally {
             @Suppress("DEPRECATION")
             try { root.recycle() } catch (_: Exception) {}
@@ -214,7 +208,74 @@ class AdBlockService : AccessibilityService() {
     }
 
     /**
-     * BFS 遍历节点树，返回第一个匹配广告关键词的节点（text 或 contentDescription 命中）。
+     * 三级点击策略：
+     * 1. 节点本身或向上 10 层的可点击父节点 → ACTION_CLICK
+     * 2. 通过节点屏幕坐标执行手势点击（dispatchGesture）→ 兜底，适用于不暴露可点击节点的自定义 View
+     */
+    private fun tryClick(node: AccessibilityNodeInfo, packageName: String): Boolean {
+        val shortPkg = packageName.substringAfterLast('.')
+        // 策略1：找可点击节点执行 ACTION_CLICK
+        val clickableNode = findClickableNode(node)
+        if (clickableNode != null) {
+            val result = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            dlog("策略1 ACTION_CLICK=$result pkg=$shortPkg")
+            if (result) return true
+        } else {
+            // 节点本身 isClickable=false 且无可点击父节点，也尝试一次 ACTION_CLICK（部分 App 即使 isClickable=false 也能响应）
+            val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            dlog("策略1(兜底原节点) ACTION_CLICK=$result pkg=$shortPkg")
+            if (result) return true
+        }
+
+        // 策略2：坐标手势点击
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (!bounds.isEmpty) {
+            val cx = bounds.centerX().toFloat()
+            val cy = bounds.centerY().toFloat()
+            dlog("策略2 手势(${cx.toInt()},${cy.toInt()}) pkg=$shortPkg")
+            val gestureResult = performGestureClick(cx, cy)
+            if (gestureResult) return true
+        } else {
+            dlog("策略2 跳过：边界为空 pkg=$shortPkg")
+        }
+
+        return false
+    }
+
+    /**
+     * 通过 GestureDescription 在指定坐标执行点击手势。
+     * 适用于自定义 View 不暴露 AccessibilityNodeInfo 可点击属性的情况（如百度地图开屏跳过按钮）。
+     */
+    private fun performGestureClick(x: Float, y: Float): Boolean {
+        return try {
+            val path = android.graphics.Path().apply { moveTo(x, y) }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 1)
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(stroke)
+                .build()
+            // dispatchGesture 是异步的，这里用同步标志等待结果
+            var success = false
+            val latch = java.util.concurrent.CountDownLatch(1)
+            dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription) {
+                    success = true
+                    latch.countDown()
+                }
+                override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription) {
+                    latch.countDown()
+                }
+            }, null)
+            latch.await(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+            success
+        } catch (e: Exception) {
+            L.w(TAG, "手势点击异常: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * BFS 遍历节点树，返回第一个匹配广告关键词的节点。
      */
     private fun findAdNode(
         root: AccessibilityNodeInfo,
@@ -242,9 +303,7 @@ class AdBlockService : AccessibilityService() {
     }
 
     /**
-     * 从匹配节点向上查找最近的可点击节点（最多向上 10 层）。
-     * 有些广告按钮的文字节点本身不可点击，点击事件在父容器上。
-     * 若 10 层内都找不到，返回 null，调用方应回退到直接点击原节点。
+     * 向上查找最近的可点击父节点（最多 10 层），找不到返回 null。
      */
     private fun findClickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isClickable) return node
@@ -262,10 +321,50 @@ class AdBlockService : AccessibilityService() {
     }
 
     /**
-     * 兜底判断：是否是系统应用（FLAG_SYSTEM 标志位）。
-     * 用于拦截 SYSTEM_PACKAGES 名单之外的系统 UI，如各厂商定制设置页。
-     * 注意：部分有广告的第三方预装 App 也带 FLAG_SYSTEM，这里选择保守策略——
-     * 只要是系统签名应用就不干预，避免误触系统操作。
+     * 诊断辅助：当关键词匹配失败时，打印当前窗口所有有文字内容的节点，
+     * 帮助分析按钮的真实文字是什么、是否被无障碍服务识别到。
+     * 始终输出 Logcat（I 级别）；诊断模式下同时显示在悬浮窗。
+     */
+    private fun dumpVisibleTextNodes(root: AccessibilityNodeInfo, pkg: String) {
+        val shortPkg = pkg.substringAfterLast('.')
+        val sb = StringBuilder("[$shortPkg] 未命中关键词，节点列表:\n")
+        val overlayLines = mutableListOf<String>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.offer(root)
+        var count = 0
+        while (queue.isNotEmpty() && count < 60) {
+            val node = queue.poll() ?: continue
+            val text = node.text?.toString()?.trim() ?: ""
+            val desc = node.contentDescription?.toString()?.trim() ?: ""
+            if (text.isNotEmpty() || desc.isNotEmpty()) {
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                val clz = node.className?.toString()?.substringAfterLast('.') ?: "?"
+                val line = "  t='$text' d='$desc' c=${node.isClickable} cls=$clz b=$bounds"
+                sb.append(line).append('\n')
+                // 悬浮窗显示精简版（节省空间）
+                val display = if (text.isNotEmpty()) "'$text'" else "desc:'$desc'"
+                overlayLines.add("$display [${clz}] clk=${node.isClickable}")
+                count++
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.offer(it) }
+            }
+        }
+        L.i(TAG, sb.toString())
+
+        if (AdBlockConfig.diagnosticMode) {
+            val ts = timeFmt.format(Date())
+            DiagnosticOverlay.log("[$ts] ⚠️$shortPkg 未命中($count 节点):")
+            overlayLines.take(12).forEach { DiagnosticOverlay.log("  $it") }
+            if (overlayLines.size > 12) {
+                DiagnosticOverlay.log("  … 还有 ${overlayLines.size - 12} 个节点")
+            }
+        }
+    }
+
+    /**
+     * 兜底：通过 FLAG_SYSTEM 标志位判断是否为系统应用。
      */
     private fun isSystemApp(packageName: String): Boolean {
         return try {
@@ -277,14 +376,9 @@ class AdBlockService : AccessibilityService() {
     }
 
     /**
-     * 判断文字是否命中关键词（忽略大小写，支持包含匹配）。
-     *
-     * 匹配规则：
-     * - 长度 <= 1 的关键词（×、✕）：必须精确相等，避免误触包含该字符的正文
-     * - 其他关键词：只要文字包含关键词即命中（"跳过 3" 包含 "跳过"，可以命中）
-     *
-     * 注意：之前对长度 <= 2 的关键词做精确匹配会导致"跳过"（2字符）无法匹配
-     * "跳过 3"、"跳过广告 5s" 等带数字/后缀的倒计时文字，已改为仅对单字符符号精确匹配。
+     * 关键词匹配：
+     * - 单字符符号（×、✕）精确匹配，避免误触正文
+     * - 其他关键词包含匹配（"跳过 3" 能命中 "跳过"）
      */
     private fun matchesKeyword(text: String, keywords: List<String>): Boolean {
         if (text.isEmpty()) return false
@@ -292,10 +386,8 @@ class AdBlockService : AccessibilityService() {
         return keywords.any { kw ->
             val lowerKw = kw.trim().lowercase()
             if (lowerKw.length <= 1) {
-                // 仅单字符符号（×, ✕）精确匹配，避免误触正文
                 lowerText == lowerKw
             } else {
-                // 其他关键词：包含匹配（"跳过 3" 能命中 "跳过"）
                 lowerText.contains(lowerKw)
             }
         }
@@ -306,7 +398,8 @@ class AdBlockService : AccessibilityService() {
     private fun onAdSkipped(packageName: String, buttonText: CharSequence?) {
         AdBlockConfig.incrementCount()
         AdBlockConfig.lastBlockedApp = packageName
-        L.i(TAG, "✅ 已跳过广告 pkg=$packageName btn=${buttonText ?: "?"}")
+        val shortPkg = packageName.substringAfterLast('.')
+        dlog("✅ 已跳过广告 pkg=$shortPkg btn='${buttonText ?: "?"}'  共${AdBlockConfig.getTodayCount()}次")
 
         if (AdBlockConfig.showToast) {
             mainHandler.post {
@@ -318,7 +411,6 @@ class AdBlockService : AccessibilityService() {
             }
         }
 
-        // 通知前台服务刷新通知栏统计
         startService(
             Intent(this, AdBlockForegroundService::class.java)
                 .setAction(AdBlockForegroundService.ACTION_UPDATE_STATS)
