@@ -16,8 +16,10 @@ import com.pengjunlong.adblock.databinding.ItemAppBinding
  * - 点击行切换选中状态
  */
 class AppPickerAdapter(
-    /** 已在白名单中的包名（初始勾选） */
+    /** 已在黑名单中的包名（初始勾选） */
     initialSelected: Set<String> = emptySet(),
+    /** 每次勾选状态变化时回调，参数为当前选中数量 */
+    private val onSelectionChanged: ((count: Int) -> Unit)? = null,
 ) : ListAdapter<AppInfo, AppPickerAdapter.ViewHolder>(DIFF_CALLBACK) {
 
     /** 当前选中的包名集合（可读） */
@@ -64,6 +66,11 @@ class AppPickerAdapter(
                     selectedPackages.add(pkg)
                     binding.cbSelected.isChecked = true
                 }
+                onSelectionChanged?.invoke(selectedPackages.size)
+            }
+            // checkbox 本身也可以点击，与行点击保持一致
+            binding.cbSelected.setOnClickListener {
+                binding.root.performClick()
             }
         }
     }

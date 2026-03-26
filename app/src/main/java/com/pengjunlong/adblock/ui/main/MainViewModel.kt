@@ -139,6 +139,7 @@ class MainViewModel : BaseViewModel() {
                 pm.getInstalledApplications(PackageManager.GET_META_DATA)
                     .filter { app ->
                         // 只保留非系统应用（FLAG_SYSTEM 未设置），且有可启动的 Launcher Intent
+                        // Android 11+ 需要 QUERY_ALL_PACKAGES 权限才能拿到完整列表
                         val isUserApp = (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0
                         val hasLaunchIntent = pm.getLaunchIntentForPackage(app.packageName) != null
                         // 排除自身

@@ -226,8 +226,17 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
      */
     private fun showAppPickerDialog() {
         val dialogBinding = DialogAppPickerBinding.inflate(layoutInflater)
+
+        // 提前声明 dialog 变量，供 adapter 的回调捕获引用
+        var dialog: AlertDialog? = null
+
         val adapter = AppPickerAdapter(
             initialSelected = viewModel.targetList.value.toSet(),
+            onSelectionChanged = { count ->
+                // 每次勾选变化时更新「确定」按钮文字
+                dialog?.getButton(AlertDialog.BUTTON_POSITIVE)
+                    ?.text = getString(R.string.app_picker_confirm, count)
+            }
         )
         dialogBinding.rvApps.layoutManager = LinearLayoutManager(this)
         dialogBinding.rvApps.adapter = adapter
@@ -235,7 +244,7 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         // 用当前已有列表初始化（可能为空，等 Flow 更新）
         adapter.setFullList(viewModel.installedApps.value)
 
-        val dialog = MaterialAlertDialogBuilder(this)
+        dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.app_picker_title)
             .setView(dialogBinding.root)
             .setPositiveButton(getString(R.string.app_picker_confirm, adapter.selectedPackages.size)) { _, _ ->
@@ -272,7 +281,7 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
             }
         }
 
-        // 加载中：显示 loading 文字在列表区域
+        // 加载中：隐藏列表显示 loading
         launchWhenStarted {
             viewModel.appsLoading.collect { loading ->
                 if (dialog.isShowing) {
@@ -282,21 +291,6 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         }
 
         dialog.show()
-
-        // 动态更新「确定」按钮文字（选中数量变化时）
-        dialogBinding.rvApps.post {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.let { btn ->
-                // 每次点击 item 时刷新按钮文字
-                dialogBinding.rvApps.addOnChildAttachStateChangeListener(
-                    object : androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener {
-                        override fun onChildViewAttachedToWindow(view: android.view.View) {
-                            view.setOnClickListener(null) // 由 adapter 处理，这里只更新按钮
-                        }
-                        override fun onChildViewDetachedFromWindow(view: android.view.View) {}
-                    }
-                )
-            }
-        }
     }
 
     private fun renderTargetList(list: List<String>) {
