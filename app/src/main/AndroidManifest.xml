@@ -37,6 +37,13 @@
             </intent-filter>
         </activity>
 
+        <!-- ─── 区域标记界面（用户拖拽标记广告按钮位置） ──────────── -->
+        <activity
+            android:name=".ui.region.RegionMarkActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
+            android:launchMode="singleTop" />
+
         <!-- ─── 无障碍服务（核心：检测广告并自动点击） ──────────── -->
         <service
             android:name=".service.AdBlockService"

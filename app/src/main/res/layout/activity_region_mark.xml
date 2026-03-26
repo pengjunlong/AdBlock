@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    区域标记界面：全屏透明覆盖层
+    用户在此页面拖拽手指划定矩形区域，松手后显示确认/重划按钮
+-->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#CC000000">
+
+    <!-- 截图背景（有截图时填满全屏，覆盖半透明遮罩；无截图时不可见） -->
+    <ImageView
+        android:id="@+id/ivScreenshot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:visibility="gone"
+        android:contentDescription="@string/region_mark_screenshot_desc" />
+
+    <!-- 半透明遮罩，有截图时降低亮度，便于看到选区边框 -->
+    <View
+        android:id="@+id/viewDimOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#99000000"
+        android:visibility="gone" />
+
+    <!-- 自定义绘制区域（拖拽时画矩形） -->
+    <com.pengjunlong.adblock.ui.region.RegionDrawView
+        android:id="@+id/regionDrawView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶部提示栏 -->
+    <LinearLayout
+        android:id="@+id/layoutTop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:paddingTop="32dp"
+        android:background="#CC000000">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/region_mark_title"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/region_mark_hint"
+            android:textColor="#CCFFFFFF"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tvPkg"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#88FFFFFF"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvCoord"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FF9800"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- 底部按钮栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:paddingBottom="32dp"
+        android:background="#CC000000"
+        android:gravity="center">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCancel"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/region_mark_cancel"
+            android:textColor="#FFFFFF"
+            app:strokeColor="#FFFFFF" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRedo"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/region_mark_redo"
+            android:textColor="#FFFFFF"
+            android:visibility="gone"
+            app:strokeColor="#FFFFFF" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnConfirm"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/region_mark_confirm"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</FrameLayout>
+

@@ -89,6 +89,28 @@ class AdBlockService : AccessibilityService() {
     private var lastContentClickWindowId: Int  = -1
     private var lastContentClickTime:     Long = 0L
 
+    // ─── 坐标规则触发时机状态 ──────────────────────────────────────────────────
+    //
+    // 「开屏广告」只在 App 冷启动或长时间后台恢复后的最初几秒出现。
+    // App 内部多个 Activity 跳转不应重复触发。
+    //
+    // 核心思路：
+    //   记录该 pkg「本轮进入前台」的起始时间（fgTime），只在起始后 adWindowSec 内允许触发。
+    //   fgTime 仅在「距上次点击 >= reEnterGapSec」时才重置——这才是真正的新一轮启动。
+    //   App 内 Activity 跳转虽然会产生新的 STATE_CHANGED 事件，但只要距上次点击时间短，
+    //   fgTime 就不会被刷新，sinceForeground 会越来越大，很快超过 adWindowSec，自然停止触发。
+    //
+    // 触发条件（同时满足）：
+    //   ① fgTime 已记录（该 pkg 本轮进入前台后产生过 STATE_CHANGED 事件）
+    //   ② 距本次进入前台的时间 <= adWindowSec（还在广告时间窗口内）
+    //   ③ 距上次点击 >= reEnterGapSec（防止在同一轮内重复点击）
+
+    /** pkg → 本轮进入前台的起始时间戳（满足 reEnterGapSec 条件时才重置） */
+    private val pkgForegroundTime = mutableMapOf<String, Long>()
+
+    /** pkg → 最近一次坐标规则点击成功的时间戳 */
+    private val pkgLastRegionClickTime = mutableMapOf<String, Long>()
+
     // ─── 诊断辅助 ──────────────────────────────────────────────────────────────
 
     /**
@@ -106,6 +128,7 @@ class AdBlockService : AccessibilityService() {
 
     override fun onServiceConnected() {
         isConnected = true
+        DiagnosticOverlay.attachService(this)
         serviceInfo = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                          AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -125,6 +148,7 @@ class AdBlockService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         isConnected = false
+        DiagnosticOverlay.detachService()
         L.i(TAG, "无障碍服务已销毁")
     }
 
@@ -146,6 +170,27 @@ class AdBlockService : AccessibilityService() {
 
         val isContentChanged = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
 
+        // STATE_CHANGED 事件：记录该 pkg「本轮进入前台」的起始时间
+        // 只有距上次点击 >= reEnterGapSec 才重置 fgTime，避免 App 内 Activity 跳转刷新计时
+        if (!isContentChanged) {
+            val now        = System.currentTimeMillis()
+            val regionRule = AdBlockConfig.getRegionRule(pkg)
+            val gapMs      = (regionRule?.reEnterGapSec ?: 30) * 1000L
+            val lastClick  = pkgLastRegionClickTime[pkg] ?: 0L
+            val lastFg     = pkgForegroundTime[pkg] ?: 0L
+
+            if (now - lastClick >= gapMs) {
+                // 距上次点击够久 → 认为是新一轮启动，重置进入前台时间
+                if (lastFg == 0L || now - lastClick >= gapMs) {
+                    pkgForegroundTime[pkg] = now
+                    dlog("🔵 pkg=${pkg.substringAfterLast('.')} 新一轮进入前台（距上次点击 ${(now - lastClick) / 1000}s）")
+                }
+            } else {
+                // 距上次点击太短 → App 内跳转，不重置 fgTime（让 sinceForeground 自然增大）
+                dlog("⏩ pkg=${pkg.substringAfterLast('.')} Activity 跳转（距上次点击仅 ${(now - lastClick) / 1000}s，跳过重置）")
+            }
+        }
+
         mainHandler.postDelayed({
             trySkipAd(pkg, isContentChanged)
         }, AdBlockConfig.clickDelayMs)
@@ -156,9 +201,50 @@ class AdBlockService : AccessibilityService() {
     private fun trySkipAd(packageName: String, isContentChanged: Boolean) {
         val root = rootInActiveWindow ?: return
         try {
-            val keywords = AdBlockConfig.getKeywords()
+            val now      = System.currentTimeMillis()
+            val shortPkg = packageName.substringAfterLast('.')
+
+            // ── 优先：坐标点击规则（用户手动标记的区域，绕过节点扫描） ─────────
+            val regionRule = AdBlockConfig.getRegionRule(packageName)
+            if (regionRule != null) {
+                // 坐标规则只在 STATE_CHANGED（窗口切换）时触发，避免 CONTENT_CHANGED 高频重复点击
+                if (!isContentChanged) {
+                    val fgTime     = pkgForegroundTime[packageName] ?: 0L
+                    val lastClick  = pkgLastRegionClickTime[packageName] ?: 0L
+                    val windowMs   = regionRule.adWindowSec * 1000L
+                    val gapMs      = regionRule.reEnterGapSec * 1000L
+
+                    val sinceForeground = now - fgTime      // 距本轮进入前台的时长
+                    val sinceLastClick  = now - lastClick   // 距上次坐标点击的时长
+
+                    val shouldFire = fgTime > 0L                // ① 已记录本轮进入前台时间
+                        && sinceForeground <= windowMs          // ② 还在广告时间窗口内
+                        && sinceLastClick  >= gapMs             // ③ 距上次点击够久（防同轮重复）
+
+                    dlog("📍 坐标规则检查 pkg=$shortPkg " +
+                         "sinceLastClick=${sinceLastClick/1000}s gapReq=${regionRule.reEnterGapSec}s " +
+                         "sinceFg=${sinceForeground/1000}s window=${regionRule.adWindowSec}s " +
+                         "fire=$shouldFire")
+
+                    if (shouldFire) {
+                        val gestureResult = performGestureClick(regionRule.cx, regionRule.cy)
+                        if (gestureResult) {
+                            pkgLastRegionClickTime[packageName] = now
+                            lastStateClickWindowId = Int.MAX_VALUE
+                            lastStateClickTime     = now
+                            onAdSkipped(packageName, "坐标(${regionRule.cx.toInt()},${regionRule.cy.toInt()})")
+                            return
+                        } else {
+                            dlog("❌ 坐标规则手势失败 pkg=$shortPkg")
+                        }
+                    }
+                }
+                // 坐标规则存在时，跳过关键词扫描（不打印节点 dump），直接返回
+                return
+            }
 
             // ── 方案A：BFS 遍历所有节点，匹配关键词 ──────────────────────────
+            val keywords  = AdBlockConfig.getKeywords()
             val candidate = findAdNode(root, keywords)
 
             if (candidate == null) {
@@ -168,18 +254,17 @@ class AdBlockService : AccessibilityService() {
             }
 
             // 冷却检查
-            val now      = System.currentTimeMillis()
-            val windowId = candidate.windowId
-            val cooldown    = if (isContentChanged) COOLDOWN_CONTENT_CHANGED else COOLDOWN_STATE_CHANGED
-            val lastWinId   = if (isContentChanged) lastContentClickWindowId  else lastStateClickWindowId
-            val lastTime    = if (isContentChanged) lastContentClickTime      else lastStateClickTime
+            val windowId  = candidate.windowId
+            val cooldown  = if (isContentChanged) COOLDOWN_CONTENT_CHANGED else COOLDOWN_STATE_CHANGED
+            val lastWinId = if (isContentChanged) lastContentClickWindowId  else lastStateClickWindowId
+            val lastTime  = if (isContentChanged) lastContentClickTime      else lastStateClickTime
 
             if (windowId == lastWinId && now - lastTime < cooldown) {
                 L.d(TAG, "冷却中 pkg=$packageName winId=$windowId isContent=$isContentChanged")
                 return
             }
 
-            dlog("候选 pkg=${packageName.substringAfterLast('.')} " +
+            dlog("候选 pkg=$shortPkg " +
                 "text='${candidate.text}' desc='${candidate.contentDescription}' " +
                 "clickable=${candidate.isClickable} class=${candidate.className?.toString()?.substringAfterLast('.')}")
 
@@ -196,7 +281,7 @@ class AdBlockService : AccessibilityService() {
                 }
                 onAdSkipped(packageName, candidate.text)
             } else {
-                dlog("❌ 三种点击策略均失败 pkg=${packageName.substringAfterLast('.')} btn='${candidate.text}'")
+                dlog("❌ 三种点击策略均失败 pkg=$shortPkg btn='${candidate.text}'")
             }
 
         } catch (e: Exception) {
@@ -391,6 +476,64 @@ class AdBlockService : AccessibilityService() {
                 lowerText.contains(lowerKw)
             }
         }
+    }
+
+    // ─── 截图功能（供 DiagnosticOverlay 调用） ────────────────────────────────
+
+    /**
+     * 截取当前屏幕，保存为 <pkg>.jpg 到 files/screenshots/ 目录，
+     * 并将路径记录到 [AdBlockConfig]。
+     *
+     * 需要 Android 11（API 30）及以上，使用 [takeScreenshot] API（无障碍服务内置，无需额外权限）。
+     */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+    fun requestScreenshot(context: android.content.Context) {
+        val pkg = AdBlockConfig.lastBlockedApp.ifEmpty { "unknown" }
+        val dir = java.io.File(context.filesDir, "screenshots").also { it.mkdirs() }
+        val outFile = java.io.File(dir, "${pkg.replace('/', '_')}.jpg")
+
+        takeScreenshot(
+            android.view.Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {
+                @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+                override fun onSuccess(result: ScreenshotResult) {
+                    try {
+                        // ScreenshotResult.getHardwareBuffer() 返回 HardwareBuffer，
+                        // 通过 Bitmap.wrapHardwareBuffer 包装，再 copy 为软件位图才能压缩保存
+                        val hwBuffer = result.hardwareBuffer
+                        val colorSpace = result.colorSpace
+                        val hwBmp = android.graphics.Bitmap.wrapHardwareBuffer(hwBuffer, colorSpace)
+                            ?: throw IllegalStateException("wrapHardwareBuffer 返回 null")
+                        hwBuffer.close()
+                        val softBmp = hwBmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                        hwBmp.recycle()
+                        outFile.outputStream().use { out ->
+                            softBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                        softBmp.recycle()
+                        AdBlockConfig.setScreenshotPath(pkg, outFile.absolutePath)
+                        mainHandler.post {
+                            android.widget.Toast.makeText(
+                                context,
+                                "截图已保存：$pkg\n去「坐标规则」卡片点标记时会自动加载为背景",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        dlog("📸 截图成功 pkg=$pkg path=${outFile.absolutePath}")
+                    } catch (e: Exception) {
+                        dlog("📸 截图保存失败: ${e.message}")
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    dlog("📸 截图失败 code=$errorCode")
+                    mainHandler.post {
+                        android.widget.Toast.makeText(context, "截图失败（code=$errorCode）", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
     }
 
     // ─── 跳过成功回调 ──────────────────────────────────────────────────────────

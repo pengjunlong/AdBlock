@@ -27,6 +27,7 @@ import com.pengjunlong.adblock.service.AdBlockConfig
 import com.pengjunlong.adblock.service.AdBlockForegroundService
 import com.pengjunlong.adblock.service.AdBlockService
 import com.pengjunlong.adblock.service.DiagnosticOverlay
+import com.pengjunlong.adblock.ui.region.RegionMarkActivity
 
 /**
  * 主界面：广告跳过服务控制面板
@@ -62,6 +63,7 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         setupStatsCard()
         setupKeywordsCard()
         setupWhitelistCard()
+        setupRegionRulesCard()
         setupSettingsCard()
     }
 
@@ -70,6 +72,8 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         // 每次回到前台刷新无障碍服务状态（用户可能刚从设置页回来）
         updateAccessibilityStatus()
         viewModel.refreshStats()
+        // 刷新区域规则列表（用户可能刚从标记界面保存了新规则）
+        renderRegionRules()
         // 刷新悬浮窗权限按钮（用户可能刚授权完回来）
         updateOverlayPermissionButton()
         // 若诊断模式开启且悬浮窗已消失（如被系统销毁），重新显示
@@ -308,7 +312,72 @@ class MainActivity : BaseActivity<ActivityMainBinding>(ActivityMainBinding::infl
         }
     }
 
-    // ─── 卡片5：设置 ──────────────────────────────────────────────────────────
+    // ─── 卡片5：坐标点击规则 ────────────────────────────────────────────────────
+
+    private fun setupRegionRulesCard() {
+        renderRegionRules()
+        binding.btnAddRegionRule.setOnClickListener {
+            showRegionRulePickerDialog()
+        }
+    }
+
+    /**
+     * 弹出「选择目标 App」对话框，选完后跳转到区域标记界面。
+     */
+    private fun showRegionRulePickerDialog() {
+        viewModel.loadInstalledApps(this)
+        val dialogBinding = DialogAppPickerBinding.inflate(layoutInflater)
+        val adapter = AppPickerAdapter(initialSelected = emptySet())
+        dialogBinding.rvApps.layoutManager = LinearLayoutManager(this)
+        dialogBinding.rvApps.adapter = adapter
+        adapter.setFullList(viewModel.installedApps.value)
+
+        var pickerDialog: AlertDialog? = null
+        pickerDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.region_mark_title)
+            .setView(dialogBinding.root)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val selected = adapter.selectedPackages.firstOrNull() ?: return@setPositiveButton
+                val appName = viewModel.installedApps.value
+                    .find { it.packageName == selected }?.appName ?: selected
+                RegionMarkActivity.start(this, selected, appName)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+
+        dialogBinding.etSearch.addTextChangedListener { editable ->
+            adapter.filter(editable?.toString() ?: "")
+        }
+        launchWhenStarted {
+            viewModel.installedApps.collect { apps ->
+                if (apps.isNotEmpty() && pickerDialog?.isShowing == true) {
+                    adapter.setFullList(apps)
+                    adapter.filter(dialogBinding.etSearch.text?.toString() ?: "")
+                }
+            }
+        }
+        pickerDialog.show()
+    }
+
+    /** 刷新区域规则 ChipGroup */
+    private fun renderRegionRules() {
+        binding.chipGroupRegionRules.removeAllViews()
+        AdBlockConfig.getRegionRules().forEach { (pkg, rule) ->
+            val label = if (rule.label.isNotEmpty()) rule.label else pkg
+            val chip = Chip(this).apply {
+                text = "$label\n(${rule.cx.toInt()},${rule.cy.toInt()})"
+                isCloseIconVisible = true
+                setOnCloseIconClickListener {
+                    AdBlockConfig.removeRegionRule(pkg)
+                    toast(getString(R.string.region_rule_deleted_toast, label))
+                    renderRegionRules()
+                }
+            }
+            binding.chipGroupRegionRules.addView(chip)
+        }
+    }
+
+    // ─── 卡片6：设置 ──────────────────────────────────────────────────────────
 
     private fun setupSettingsCard() {
         // 点击延迟

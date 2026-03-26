@@ -31,6 +31,8 @@ object AdBlockConfig {
     private const val KEY_STATS_DATE     = "stats_date"
     private const val KEY_LAST_APP       = "last_app"
     private const val KEY_DIAGNOSTIC     = "diagnostic_mode"  // 悬浮窗诊断模式
+    private const val KEY_REGION_RULES   = "region_rules"    // 坐标点击规则
+    private const val KEY_SCREENSHOTS    = "screenshots"     // 包名→截图文件路径映射
 
     /** 内置默认关键词（中英文，覆盖主流场景） */
     val DEFAULT_KEYWORDS: List<String> = listOf(
@@ -179,6 +181,74 @@ object AdBlockConfig {
     var lastBlockedApp: String
         get() = store.decodeString(KEY_LAST_APP, "") ?: ""
         set(v) { store.encode(KEY_LAST_APP, v) }
+
+    // ─── 坐标点击规则 ───────────────────────────────────────────────────────────
+    //
+    // 每条规则绑定一个包名，记录用户在标记界面划定的矩形中心点坐标（相对于屏幕像素）。
+    // 服务检测到该包名的窗口事件后，直接用手势点击该坐标，优先级高于关键词扫描。
+
+    /** 获取所有坐标点击规则（包名 → RegionRule 映射） */
+    fun getRegionRules(): MutableMap<String, RegionRule> {
+        val json = store.decodeString(KEY_REGION_RULES, null)
+        if (json.isNullOrEmpty()) return mutableMapOf()
+        return try {
+            val type = object : TypeToken<MutableMap<String, RegionRule>>() {}.type
+            gson.fromJson(json, type) ?: mutableMapOf()
+        } catch (e: Exception) {
+            mutableMapOf()
+        }
+    }
+
+    fun saveRegionRules(rules: Map<String, RegionRule>) {
+        store.encode(KEY_REGION_RULES, gson.toJson(rules))
+    }
+
+    fun setRegionRule(packageName: String, rule: RegionRule) {
+        val map = getRegionRules()
+        map[packageName] = rule
+        saveRegionRules(map)
+    }
+
+    fun removeRegionRule(packageName: String) {
+        val map = getRegionRules()
+        map.remove(packageName)
+        saveRegionRules(map)
+    }
+
+    fun getRegionRule(packageName: String): RegionRule? = getRegionRules()[packageName]
+
+    // ─── 截图路径 ──────────────────────────────────────────────────────────────
+    //
+    // 用户点击悬浮窗「📸」按钮后，截图保存为 files/screenshots/<pkg>.jpg，
+    // 此处存储包名→文件路径映射，供 RegionMarkActivity 加载背景图。
+
+    private fun getScreenshotMap(): MutableMap<String, String> {
+        val json = store.decodeString(KEY_SCREENSHOTS, null)
+        if (json.isNullOrEmpty()) return mutableMapOf()
+        return try {
+            val type = object : TypeToken<MutableMap<String, String>>() {}.type
+            gson.fromJson(json, type) ?: mutableMapOf()
+        } catch (e: Exception) {
+            mutableMapOf()
+        }
+    }
+
+    /** 保存某个包名对应的截图文件路径 */
+    fun setScreenshotPath(packageName: String, filePath: String) {
+        val map = getScreenshotMap()
+        map[packageName] = filePath
+        store.encode(KEY_SCREENSHOTS, gson.toJson(map))
+    }
+
+    /** 获取某个包名对应的截图文件路径（无截图时返回 null） */
+    fun getScreenshotPath(packageName: String): String? = getScreenshotMap()[packageName]
+
+    /** 删除某个包名的截图记录（不删除文件，文件由调用方处理） */
+    fun removeScreenshotPath(packageName: String) {
+        val map = getScreenshotMap()
+        map.remove(packageName)
+        store.encode(KEY_SCREENSHOTS, gson.toJson(map))
+    }
 
     private fun todayStr(): String {
         val cal = java.util.Calendar.getInstance()

@@ -73,5 +73,25 @@
     <string name="diagnostic_mode_hint">开启后会在屏幕顶部显示浮窗，实时输出节点扫描和点击结果</string>
     <string name="overlay_permission_required">需授权悬浮窗权限</string>
     <string name="go_to_overlay_settings">前往授权悬浮窗权限</string>
+
+    <!-- 坐标点击规则 -->
+    <string name="region_rules_card_title">坐标点击规则</string>
+    <string name="region_rules_hint">为指定 App 标记屏幕区域，服务检测到该 App 开屏时直接点击对应坐标，优先于关键词匹配</string>
+    <string name="region_rule_add">添加规则…</string>
+    <string name="region_rule_deleted_toast">已删除规则：%s</string>
+    <string name="region_rule_saved_toast">已保存坐标规则：%s</string>
+    <!-- 区域标记界面 -->
+    <string name="region_mark_title">标记跳过区域</string>
+    <string name="region_mark_hint">在屏幕上拖拽选取按钮所在位置，松手后保存</string>
+    <string name="region_mark_confirm">保存此区域</string>
+    <string name="region_mark_cancel">取消</string>
+    <string name="region_mark_redo">重新划定</string>
+    <string name="region_mark_no_region">请先划定区域</string>
+    <string name="region_mark_pkg_label">目标应用：%s</string>
+    <string name="region_mark_coord_label">点击坐标：(%.0f, %.0f)</string>
+    <string name="region_mark_screenshot_desc">广告截图背景</string>
+    <string name="region_mark_has_screenshot">已有截图背景，可在截图上直接拖拽标记</string>
+    <string name="region_mark_no_screenshot">无截图背景（纯色遮罩模式），可去悬浮窗点 📸 截图后重试</string>
+    <string name="screenshot_saved_toast">截图已保存，去标记区域时将自动加载为背景</string>
 </resources>
 

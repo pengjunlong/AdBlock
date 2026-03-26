@@ -321,7 +321,60 @@
             </com.google.android.material.card.MaterialCardView>
 
             <!-- ══════════════════════════════════════════
-                 卡片5：高级设置
+                 卡片5：坐标点击规则
+            ══════════════════════════════════════════ -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardElevation="2dp"
+                app:cardCornerRadius="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/region_rules_card_title"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="4dp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/region_rules_hint"
+                        android:textSize="12sp"
+                        android:textColor="#757575"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- 添加规则按钮 -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAddRegionRule"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="@string/region_rule_add"
+                        app:icon="@android:drawable/ic_menu_add" />
+
+                    <!-- 已保存规则列表（动态填充 Chip） -->
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/chipGroupRegionRules"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        app:chipSpacingVertical="4dp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ══════════════════════════════════════════
+                 卡片6：高级设置
             ══════════════════════════════════════════ -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
